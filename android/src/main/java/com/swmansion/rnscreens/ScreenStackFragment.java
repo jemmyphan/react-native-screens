@@ -11,6 +11,7 @@ import android.widget.LinearLayout;
 import androidx.annotation.Nullable;
 import androidx.appcompat.widget.Toolbar;
 import androidx.coordinatorlayout.widget.CoordinatorLayout;
+import androidx.fragment.app.Fragment;
 
 import com.facebook.react.uimanager.PixelUtil;
 import com.google.android.material.appbar.AppBarLayout;
@@ -22,6 +23,7 @@ public class ScreenStackFragment extends ScreenFragment {
   private AppBarLayout mAppBarLayout;
   private Toolbar mToolbar;
   private boolean mShadowHidden;
+  private CoordinatorLayout mScreenRootView;
 
   @SuppressLint("ValidFragment")
   public ScreenStackFragment(Screen screenView) {
@@ -59,10 +61,7 @@ public class ScreenStackFragment extends ScreenFragment {
     }
   }
 
-  @Override
-  public View onCreateView(LayoutInflater inflater,
-                           @Nullable ViewGroup container,
-                           @Nullable Bundle savedInstanceState) {
+  private CoordinatorLayout configureView() {
     CoordinatorLayout view = new CoordinatorLayout(getContext());
     CoordinatorLayout.LayoutParams params = new CoordinatorLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT);
@@ -87,11 +86,47 @@ public class ScreenStackFragment extends ScreenFragment {
     return view;
   }
 
-  public boolean isDismissable() {
-    View child = mScreenView.getChildAt(0);
-    if (child instanceof ScreenStackHeaderConfig) {
-      return ((ScreenStackHeaderConfig) child).isDismissable();
+  @Override
+  public View onCreateView(LayoutInflater inflater,
+                           @Nullable ViewGroup container,
+                           @Nullable Bundle savedInstanceState) {
+    if (mScreenRootView == null) {
+      mScreenRootView = configureView();
     }
-    return true;
+
+    return mScreenRootView;
+  }
+
+  public boolean isDismissable() {
+    return mScreenView.isGestureEnabled();
+  }
+
+  public boolean canNavigateBack() {
+    ScreenContainer container = mScreenView.getContainer();
+    if (container instanceof ScreenStack) {
+      if (((ScreenStack) container).getRootScreen() == getScreen()) {
+        // this screen is the root of the container, if it is nested we can check parent container
+        // if it is also a root or not
+        Fragment parentFragment = getParentFragment();
+        if (parentFragment instanceof ScreenStackFragment) {
+          return ((ScreenStackFragment) parentFragment).canNavigateBack();
+        } else {
+          return false;
+        }
+      } else {
+        return true;
+      }
+    } else {
+      throw new IllegalStateException("ScreenStackFragment added into a non-stack container");
+    }
+  }
+
+  public void dismiss() {
+    ScreenContainer container = mScreenView.getContainer();
+    if (container instanceof ScreenStack) {
+      ((ScreenStack) container).dismiss(this);
+    } else {
+      throw new IllegalStateException("ScreenStackFragment added into a non-stack container");
+    }
   }
 }

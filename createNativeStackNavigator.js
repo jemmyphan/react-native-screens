@@ -4,7 +4,6 @@ import {
   StackRouter,
   SceneView,
   StackActions,
-  NavigationActions,
   createNavigator,
 } from '@react-navigation/core';
 import { createKeyboardAwareNavigator } from '@react-navigation/native';
@@ -13,9 +12,10 @@ import {
   ScreenStack,
   Screen,
   ScreenStackHeaderConfig,
+  ScreenStackHeaderBackButtonImage,
   ScreenStackHeaderLeftView,
   ScreenStackHeaderRightView,
-  ScreenStackHeaderTitleView,
+  ScreenStackHeaderCenterView,
 } from 'react-native-screens';
 
 function renderComponentOrThunk(componentOrThunk, props) {
@@ -27,14 +27,16 @@ function renderComponentOrThunk(componentOrThunk, props) {
 
 class StackView extends React.Component {
   _removeScene = route => {
-    const { navigation } = this.props;
-    navigation.dispatch(
-      NavigationActions.back({
-        key: route.key,
-        immediate: true,
-      })
+    this.props.navigation.dispatch(StackActions.pop({ key: route.key }));
+  };
+
+  _onSceneFocus = (route, descriptor) => {
+    descriptor.options &&
+      descriptor.options.onAppear &&
+      descriptor.options.onAppear();
+    this.props.navigation.dispatch(
+      StackActions.completeTransition({ toChildKey: route.key })
     );
-    navigation.dispatch(StackActions.completeTransition());
   };
 
   _renderHeaderConfig = (index, route, descriptor) => {
@@ -48,8 +50,8 @@ class StackView extends React.Component {
       headerTitleStyle,
       headerBackTitleStyle,
       headerBackTitle,
+      headerBackTitleVisible,
       headerTintColor,
-      gestureEnabled,
       largeTitle,
       headerLargeTitleStyle,
       translucent,
@@ -69,12 +71,11 @@ class StackView extends React.Component {
       titleFontFamily: headerTitleStyle && headerTitleStyle.fontFamily,
       titleColor: headerTintColor,
       titleFontSize: headerTitleStyle && headerTitleStyle.fontSize,
-      backTitle: headerBackTitle,
+      backTitle: headerBackTitleVisible === false ? '' : headerBackTitle,
       backTitleFontFamily:
         headerBackTitleStyle && headerBackTitleStyle.fontFamily,
       backTitleFontSize: headerBackTitleStyle && headerBackTitleStyle.fontSize,
       color: headerTintColor,
-      gestureEnabled: gestureEnabled === undefined ? true : gestureEnabled,
       largeTitle,
       largeTitleFontFamily:
         headerLargeTitleStyle && headerLargeTitleStyle.fontFamily,
@@ -93,6 +94,15 @@ class StackView extends React.Component {
     }
 
     const children = [];
+
+    if (options.backButtonImage) {
+      children.push(
+        <ScreenStackHeaderBackButtonImage
+          key="backImage"
+          source={options.backButtonImage}
+        />
+      );
+    }
 
     if (options.headerLeft !== undefined) {
       children.push(
@@ -131,9 +141,9 @@ class StackView extends React.Component {
         headerOptions.title = options.headerTitle;
       } else {
         children.push(
-          <ScreenStackHeaderTitleView key="title">
+          <ScreenStackHeaderCenterView key="center">
             {renderComponentOrThunk(options.headerTitle, { scene })}
-          </ScreenStackHeaderTitleView>
+          </ScreenStackHeaderCenterView>
         );
       }
     }
@@ -154,21 +164,37 @@ class StackView extends React.Component {
   };
 
   _renderScene = (index, route, descriptor) => {
-    const { navigation, getComponent } = descriptor;
+    const { navigation, getComponent, options } = descriptor;
     const { mode, transparentCard } = this.props.navigationConfig;
     const SceneComponent = getComponent();
 
     let stackPresentation = 'push';
-    if (mode === 'modal') {
-      stackPresentation = transparentCard ? 'transparentModal' : 'modal';
+    if (mode === 'modal' || mode === 'containedModal') {
+      stackPresentation = mode;
+      if (transparentCard || options.cardTransparent) {
+        stackPresentation =
+          mode === 'containedModal'
+            ? 'containedTransparentModal'
+            : 'transparentModal';
+      }
+    }
+
+    let stackAnimation = options.stackAnimation;
+    if (options.animationEnabled === false) {
+      stackAnimation = 'none';
     }
 
     const { screenProps } = this.props;
     return (
       <Screen
         key={`screen_${route.key}`}
-        style={StyleSheet.absoluteFill}
+        style={options.cardStyle}
+        stackAnimation={stackAnimation}
         stackPresentation={stackPresentation}
+        gestureEnabled={
+          options.gestureEnabled === undefined ? true : options.gestureEnabled
+        }
+        onAppear={() => this._onSceneFocus(route, descriptor)}
         onDismissed={() => this._removeScene(route)}>
         {this._renderHeaderConfig(index, route, descriptor)}
         <SceneView
@@ -199,7 +225,6 @@ const styles = StyleSheet.create({
 
 function createStackNavigator(routeConfigMap, stackConfig = {}) {
   const router = StackRouter(routeConfigMap, stackConfig);
-
   // Create a navigator with StackView as the view
   let Navigator = createNavigator(StackView, router, stackConfig);
   // if (!stackConfig.disableKeyboardHandling) {

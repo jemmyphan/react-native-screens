@@ -26,6 +26,7 @@
     _controller = [[RNSScreen alloc] initWithView:self];
     _stackPresentation = RNSScreenStackPresentationPush;
     _stackAnimation = RNSScreenStackAnimationDefault;
+    _gestureEnabled = YES;
   }
 
   return self;
@@ -33,6 +34,9 @@
 
 - (void)reactSetFrame:(CGRect)frame
 {
+  if (_active) {
+    [super reactSetFrame:frame];
+  }
   // ignore setFrame call from react, the frame of this view
   // is controlled by the UIViewController it is contained in
 }
@@ -95,6 +99,9 @@
     case RNSScreenStackAnimationFade:
       _controller.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
       break;
+    case RNSScreenStackAnimationFlip:
+      _controller.modalTransitionStyle = UIModalTransitionStyleFlipHorizontal;
+      break;
     case RNSScreenStackAnimationNone:
     case RNSScreenStackAnimationDefault:
       // Default
@@ -111,6 +118,8 @@
 {
   if (![view isKindOfClass:[RNSScreenStackHeaderConfig class]]) {
     [super addSubview:view];
+  } else {
+    ((RNSScreenStackHeaderConfig*) view).screenView = self;
   }
 }
 
@@ -125,6 +134,17 @@
     dispatch_async(dispatch_get_main_queue(), ^{
       if (self.onDismissed) {
         self.onDismissed(nil);
+      }
+    });
+  }
+}
+
+- (void)notifyAppear
+{
+  if (self.onAppear) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (self.onAppear) {
+        self.onAppear(nil);
       }
     });
   }
@@ -230,6 +250,12 @@
   }
 }
 
+- (void)viewDidAppear:(BOOL)animated
+{
+  [super viewDidAppear:animated];
+  [((RNSScreenView *)self.view) notifyAppear];
+}
+
 - (void)notifyFinishTransitioning
 {
   [_previousFirstResponder becomeFirstResponder];
@@ -251,8 +277,10 @@
 RCT_EXPORT_MODULE()
 
 RCT_EXPORT_VIEW_PROPERTY(active, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(gestureEnabled, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(stackPresentation, RNSScreenStackPresentation)
 RCT_EXPORT_VIEW_PROPERTY(stackAnimation, RNSScreenStackAnimation)
+RCT_EXPORT_VIEW_PROPERTY(onAppear, RCTDirectEventBlock);
 RCT_EXPORT_VIEW_PROPERTY(onDismissed, RCTDirectEventBlock);
 
 - (UIView *)view
@@ -275,8 +303,10 @@ RCT_ENUM_CONVERTER(RNSScreenStackPresentation, (@{
 RCT_ENUM_CONVERTER(RNSScreenStackAnimation, (@{
                                                   @"default": @(RNSScreenStackAnimationDefault),
                                                   @"none": @(RNSScreenStackAnimationNone),
-                                                  @"fade": @(RNSScreenStackAnimationFade)
+                                                  @"fade": @(RNSScreenStackAnimationFade),
+                                                  @"flip": @(RNSScreenStackAnimationFlip),
                                                   }), RNSScreenStackAnimationDefault, integerValue)
 
 
 @end
+

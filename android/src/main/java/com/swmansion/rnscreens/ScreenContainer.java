@@ -2,6 +2,7 @@ package com.swmansion.rnscreens;
 
 import android.content.Context;
 import android.content.ContextWrapper;
+import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
 
@@ -22,11 +23,16 @@ public class ScreenContainer<T extends ScreenFragment> extends ViewGroup {
 
   protected final ArrayList<T> mScreenFragments = new ArrayList<>();
   private final Set<ScreenFragment> mActiveScreenFragments = new HashSet<>();
+  private final ArrayList<Runnable> mAfterTransitionRunnables = new ArrayList<>(1);
 
+  protected @Nullable FragmentManager mFragmentManager;
   private @Nullable FragmentTransaction mCurrentTransaction;
+  private @Nullable FragmentTransaction mProcessingTransaction;
   private boolean mNeedUpdate;
   private boolean mIsAttached;
+  private boolean mIsTransitioning;
   private boolean mLayoutEnqueued = false;
+
 
   private final ChoreographerCompat.FrameCallback mFrameCallback = new ChoreographerCompat.FrameCallback() {
     @Override
@@ -35,9 +41,9 @@ public class ScreenContainer<T extends ScreenFragment> extends ViewGroup {
     }
   };
 
-  private final Runnable mLayoutRunnable = new Runnable() {
+  private final ChoreographerCompat.FrameCallback mLayoutCallback = new ChoreographerCompat.FrameCallback() {
     @Override
-    public void run() {
+    public void doFrame(long frameTimeNanos) {
       mLayoutEnqueued = false;
       measure(
               MeasureSpec.makeMeasureSpec(getWidth(), MeasureSpec.EXACTLY),
@@ -61,9 +67,13 @@ public class ScreenContainer<T extends ScreenFragment> extends ViewGroup {
   public void requestLayout() {
     super.requestLayout();
 
-    if (!mLayoutEnqueued) {
+    if (!mLayoutEnqueued && mLayoutCallback != null) {
       mLayoutEnqueued = true;
-      post(mLayoutRunnable);
+      // we use NATIVE_ANIMATED_MODULE choreographer queue because it allows us to catch the current
+      // looper loop instead of enqueueing the update in the next loop causing a one frame delay.
+      ReactChoreographer.getInstance().postFrameCallback(
+              ReactChoreographer.CallbackType.NATIVE_ANIMATED_MODULE,
+              mLayoutCallback);
     }
   }
 
@@ -100,6 +110,44 @@ public class ScreenContainer<T extends ScreenFragment> extends ViewGroup {
     markUpdated();
   }
 
+  protected void removeAllScreens() {
+    for (int i = 0, size = mScreenFragments.size(); i < size; i++) {
+      mScreenFragments.get(i).getScreen().setContainer(null);
+    }
+    mScreenFragments.clear();
+    markUpdated();
+  }
+
+  @Override
+  public void startViewTransition(View view) {
+    super.startViewTransition(view);
+    mIsTransitioning = true;
+  }
+
+  @Override
+  public void endViewTransition(View view) {
+    super.endViewTransition(view);
+    if (mIsTransitioning) {
+      mIsTransitioning = false;
+      notifyTransitionFinished();
+    }
+  }
+
+  public boolean isTransitioning() {
+    return mIsTransitioning || mProcessingTransaction != null;
+  }
+
+  public void postAfterTransition(Runnable runnable) {
+    mAfterTransitionRunnables.add(runnable);
+  }
+
+  protected void notifyTransitionFinished() {
+    for (int i = 0, size = mAfterTransitionRunnables.size(); i < size; i++) {
+      mAfterTransitionRunnables.get(i).run();
+    }
+    mAfterTransitionRunnables.clear();
+  }
+
   protected int getScreenCount() {
     return mScreenFragments.size();
   }
@@ -108,11 +156,18 @@ public class ScreenContainer<T extends ScreenFragment> extends ViewGroup {
     return mScreenFragments.get(index).getScreen();
   }
 
-  protected final FragmentActivity findRootFragmentActivity() {
+  private FragmentManager findFragmentManager() {
     ViewParent parent = this;
-    while (!(parent instanceof ReactRootView) && parent.getParent() != null) {
+    // We traverse view hierarchy up until we find screen parent or a root view
+    while (!(parent instanceof ReactRootView || parent instanceof Screen) && parent.getParent() != null) {
       parent = parent.getParent();
     }
+    // If parent is of type Screen it means we are inside a nested fragment structure.
+    // Otherwise we expect to connect directly with root view and get root fragment manager
+    if (parent instanceof Screen) {
+      return ((Screen) parent).getFragment().getChildFragmentManager();
+    }
+
     // we expect top level view to be of type ReactRootView, this isn't really necessary but in order
     // to find root view we test if parent is null. This could potentially happen also when the view
     // is detached from the hierarchy and that test would not correctly indicate the root view. So
@@ -131,16 +186,12 @@ public class ScreenContainer<T extends ScreenFragment> extends ViewGroup {
       throw new IllegalStateException(
               "In order to use RNScreens components your app's activity need to extend ReactFragmentActivity or ReactCompatActivity");
     }
-    return (FragmentActivity) context;
-  }
-
-  protected FragmentManager getFragmentManager() {
-    return findRootFragmentActivity().getSupportFragmentManager();
+    return ((FragmentActivity) context).getSupportFragmentManager();
   }
 
   protected FragmentTransaction getOrCreateTransaction() {
     if (mCurrentTransaction == null) {
-      mCurrentTransaction = getFragmentManager().beginTransaction();
+      mCurrentTransaction = mFragmentManager.beginTransaction();
       mCurrentTransaction.setReorderingAllowed(true);
     }
     return mCurrentTransaction;
@@ -148,6 +199,19 @@ public class ScreenContainer<T extends ScreenFragment> extends ViewGroup {
 
   protected void tryCommitTransaction() {
     if (mCurrentTransaction != null) {
+      final FragmentTransaction transaction = mCurrentTransaction;
+      mProcessingTransaction = transaction;
+      mProcessingTransaction.runOnCommit(new Runnable() {
+        @Override
+        public void run() {
+         if (mProcessingTransaction == transaction) {
+           // we need to take into account that commit is initiated with some other transaction while
+           // the previous one is still processing. In this case mProcessingTransaction gets overwritten
+           // and we don't want to set it to null until the second transaction is finished.
+           mProcessingTransaction = null;
+         }
+        }
+      });
       mCurrentTransaction.commitAllowingStateLoss();
       mCurrentTransaction = null;
     }
@@ -173,10 +237,16 @@ public class ScreenContainer<T extends ScreenFragment> extends ViewGroup {
     return screenFragment.getScreen().isActive();
   }
 
+  protected boolean hasScreen(ScreenFragment screenFragment) {
+    return mScreenFragments.contains(screenFragment);
+  }
+
   @Override
   protected void onAttachedToWindow() {
     super.onAttachedToWindow();
     mIsAttached = true;
+    mNeedUpdate = true;
+    mFragmentManager = findFragmentManager();
     updateIfNeeded();
   }
 
@@ -184,6 +254,14 @@ public class ScreenContainer<T extends ScreenFragment> extends ViewGroup {
   protected void onDetachedFromWindow() {
     super.onDetachedFromWindow();
     mIsAttached = false;
+
+    // fragment manager is destroyed so we can't do anything with it anymore
+    mFragmentManager = null;
+    // so we don't add the same screen twice after re-attach
+    removeAllViews();
+    mActiveScreenFragments.clear();
+    // after re-attach we'll update the screen and add views again
+    markUpdated();
   }
 
   @Override

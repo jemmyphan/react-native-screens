@@ -17,6 +17,7 @@ typedef NS_ENUM(NSInteger, RNSScreenStackAnimation) {
   RNSScreenStackAnimationDefault,
   RNSScreenStackAnimationNone,
   RNSScreenStackAnimationFade,
+  RNSScreenStackAnimationFlip,
 };
 
 @interface RCTConvert (RNSScreen)
@@ -38,10 +39,12 @@ typedef NS_ENUM(NSInteger, RNSScreenStackAnimation) {
 
 @interface RNSScreenView : RCTView
 
+@property (nonatomic, copy) RCTDirectEventBlock onAppear;
 @property (nonatomic, copy) RCTDirectEventBlock onDismissed;
 @property (weak, nonatomic) UIView<RNSScreenContainerDelegate> *reactSuperview;
 @property (nonatomic, retain) UIViewController *controller;
 @property (nonatomic) BOOL active;
+@property (nonatomic) BOOL gestureEnabled;
 @property (nonatomic) RNSScreenStackAnimation stackAnimation;
 @property (nonatomic) RNSScreenStackPresentation stackPresentation;
 

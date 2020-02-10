@@ -1,7 +1,11 @@
 #import <React/RCTViewManager.h>
 #import <React/RCTConvert.h>
 
+#import "RNSScreen.h"
+
 @interface RNSScreenStackHeaderConfig : UIView
+
+@property (nonatomic, weak) RNSScreenView *screenView;
 
 @property (nonatomic, retain) NSString *title;
 @property (nonatomic, retain) NSString *titleFontFamily;
@@ -19,7 +23,6 @@
 @property (nonatomic) BOOL hideBackButton;
 @property (nonatomic) BOOL hideShadow;
 @property (nonatomic) BOOL translucent;
-@property (nonatomic) BOOL gestureEnabled;
 
 + (void)willShowViewController:(UIViewController *)vc withConfig:(RNSScreenStackHeaderConfig*)config;
 
@@ -30,6 +33,7 @@
 @end
 
 typedef NS_ENUM(NSInteger, RNSScreenStackHeaderSubviewType) {
+  RNSScreenStackHeaderSubviewTypeBackButton,
   RNSScreenStackHeaderSubviewTypeLeft,
   RNSScreenStackHeaderSubviewTypeRight,
   RNSScreenStackHeaderSubviewTypeTitle,

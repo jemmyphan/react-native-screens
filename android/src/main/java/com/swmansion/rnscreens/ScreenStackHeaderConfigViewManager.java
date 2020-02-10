@@ -4,10 +4,11 @@ import android.view.View;
 
 import com.facebook.react.bridge.JSApplicationCausedNativeException;
 import com.facebook.react.module.annotations.ReactModule;
-import com.facebook.react.uimanager.PixelUtil;
 import com.facebook.react.uimanager.ThemedReactContext;
 import com.facebook.react.uimanager.ViewGroupManager;
 import com.facebook.react.uimanager.annotations.ReactProp;
+
+import javax.annotation.Nonnull;
 
 @ReactModule(name = ScreenStackHeaderConfigViewManager.REACT_CLASS)
 public class ScreenStackHeaderConfigViewManager extends ViewGroupManager<ScreenStackHeaderConfig> {
@@ -33,6 +34,16 @@ public class ScreenStackHeaderConfigViewManager extends ViewGroupManager<ScreenS
   }
 
   @Override
+  public void onDropViewInstance(@Nonnull ScreenStackHeaderConfig view) {
+    view.destroy();
+  }
+
+  @Override
+  public void removeAllViews(ScreenStackHeaderConfig parent) {
+    parent.removeAllConfigSubviews();
+  }
+
+  @Override
   public void removeViewAt(ScreenStackHeaderConfig parent, int index) {
     parent.removeConfigSubview(index);
   }
@@ -52,6 +63,12 @@ public class ScreenStackHeaderConfigViewManager extends ViewGroupManager<ScreenS
     return true;
   }
 
+  @Override
+  protected void onAfterUpdateTransaction(ScreenStackHeaderConfig parent) {
+    super.onAfterUpdateTransaction(parent);
+    parent.onUpdate();
+  }
+
   @ReactProp(name = "title")
   public void setTitle(ScreenStackHeaderConfig config, String title) {
     config.setTitle(title);
@@ -63,8 +80,8 @@ public class ScreenStackHeaderConfigViewManager extends ViewGroupManager<ScreenS
   }
 
   @ReactProp(name = "titleFontSize")
-  public void setTitleFontSize(ScreenStackHeaderConfig config, double titleFontSizeSP) {
-    config.setTitleFontSize((int) PixelUtil.toPixelFromSP(titleFontSizeSP));
+  public void setTitleFontSize(ScreenStackHeaderConfig config, float titleFontSize) {
+    config.setTitleFontSize(titleFontSize);
   }
 
   @ReactProp(name = "titleColor", customType = "Color")
@@ -80,11 +97,6 @@ public class ScreenStackHeaderConfigViewManager extends ViewGroupManager<ScreenS
   @ReactProp(name = "hideShadow")
   public void setHideShadow(ScreenStackHeaderConfig config, boolean hideShadow) {
     config.setHideShadow(hideShadow);
-  }
-
-  @ReactProp(name = "gestureEnabled", defaultBoolean = true)
-  public void setGestureEnabled(ScreenStackHeaderConfig config, boolean gestureEnabled) {
-    config.setGestureEnabled(gestureEnabled);
   }
 
   @ReactProp(name = "hideBackButton")

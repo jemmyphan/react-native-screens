@@ -22,6 +22,7 @@
   NSMutableArray<RNSScreenView *> *_reactSubviews;
   NSMutableSet<RNSScreenView *> *_dismissedScreens;
   NSMutableArray<UIViewController *> *_presentedModals;
+  __weak UIViewController* recentPopped;
   __weak RNSScreenStackManager *_manager;
 }
 
@@ -69,6 +70,10 @@
       [_dismissedScreens addObject:[_reactSubviews objectAtIndex:i - 1]];
     }
   }
+  if (recentPopped != nil) {
+    recentPopped.view = nil;
+    recentPopped = nil;
+  }
 }
 
 - (id<UIViewControllerAnimatedTransitioning>)navigationController:(UINavigationController *)navigationController animationControllerForOperation:(UINavigationControllerOperation)operation fromViewController:(UIViewController *)fromVC toViewController:(UIViewController *)toVC
@@ -77,9 +82,10 @@
   if (operation == UINavigationControllerOperationPush) {
     screen = (RNSScreenView *) toVC.view;
   } else if (operation == UINavigationControllerOperationPop) {
-   screen = (RNSScreenView *) fromVC.view;
+    screen = (RNSScreenView *) fromVC.view;
+    recentPopped = fromVC;
   }
-  if (screen != nil && screen.stackAnimation != RNSScreenStackAnimationDefault) {
+  if (screen != nil && (screen.stackAnimation == RNSScreenStackAnimationFade || screen.stackAnimation == RNSScreenStackAnimationNone)) {
     return  [[RNSScreenStackAnimator alloc] initWithOperation:operation];
   }
   return nil;
@@ -96,7 +102,9 @@
   RCTRootContentView *rootView = (RCTRootContentView *)parent;
   [rootView.touchHandler cancel];
 
-  return _controller.viewControllers.count > 1;
+  RNSScreenView *topScreen = (RNSScreenView *)_controller.viewControllers.lastObject.view;
+
+  return _controller.viewControllers.count > 1 && topScreen.gestureEnabled;
 }
 
 - (void)markChildUpdated
@@ -137,41 +145,65 @@
 
 - (void)setModalViewControllers:(NSArray<UIViewController *> *)controllers
 {
+  // when there is no change we return immediately. This check is important because sometime we may
+  // accidently trigger modal dismiss if we don't verify to run the below code only when an actual
+  // change in the list of presented modal was made.
+  if ([_presentedModals isEqualToArray:controllers]) {
+    return;
+  }
+
   NSMutableArray<UIViewController *> *newControllers = [NSMutableArray arrayWithArray:controllers];
   [newControllers removeObjectsInArray:_presentedModals];
 
-  NSMutableArray<UIViewController *> *controllersToRemove = [NSMutableArray arrayWithArray:_presentedModals];
-  [controllersToRemove removeObjectsInArray:controllers];
-
-  // presenting new controllers
-  for (UIViewController *newController in newControllers) {
-    [_presentedModals addObject:newController];
-    if (_controller.presentedViewController != nil) {
-      [_controller.presentedViewController presentViewController:newController animated:YES completion:nil];
+  // find bottom-most controller that should stay on the stack for the duration of transition
+  NSUInteger changeRootIndex = 0;
+  UIViewController *changeRootController = _controller;
+  for (NSUInteger i = 0; i < MIN(_presentedModals.count, controllers.count); i++) {
+    if (_presentedModals[i] == controllers[i]) {
+      changeRootController = controllers[i];
+      changeRootIndex = i + 1;
     } else {
-      [_controller presentViewController:newController animated:YES completion:nil];
+      break;
     }
   }
 
-  // hiding old controllers
-  for (UIViewController *controller in [controllersToRemove reverseObjectEnumerator]) {
-    [_presentedModals removeObject:controller];
-    if (controller.presentedViewController != nil) {
-      UIViewController *restore = controller.presentedViewController;
-      UIViewController *parent = controller.presentingViewController;
-      [controller dismissViewControllerAnimated:NO completion:^{
-        [parent dismissViewControllerAnimated:NO completion:^{
-          [parent presentViewController:restore animated:NO completion:nil];
-        }];
-      }];
-    } else {
-      [controller.presentingViewController dismissViewControllerAnimated:YES completion:nil];
+  // we verify that controllers added on top of changeRootIndex are all new. Unfortunately modal
+  // VCs cannot be reshuffled (there are some visual glitches when we try to dismiss then show as
+  // even non-animated dismissal has delay and updates the screen several times)
+  for (NSUInteger i = changeRootIndex; i < controllers.count; i++) {
+    if ([_presentedModals containsObject:controllers[i]]) {
+      RCTAssert(false, @"Modally presented controllers are being reshuffled, this is not allowed");
     }
   }
+
+  void (^finish)(void) = ^{
+    UIViewController *previous = changeRootController;
+    for (NSUInteger i = changeRootIndex; i < controllers.count; i++) {
+      UIViewController *next = controllers[i];
+      [previous presentViewController:next
+                             animated:(i == controllers.count - 1)
+                             completion:nil];
+      previous = next;
+    }
+  };
+
+  if (changeRootController.presentedViewController) {
+    [changeRootController
+     dismissViewControllerAnimated:(changeRootIndex == controllers.count)
+     completion:finish];
+  } else {
+    finish();
+  }
+  [_presentedModals setArray:controllers];
 }
 
 - (void)setPushViewControllers:(NSArray<UIViewController *> *)controllers
 {
+  // when there is no change we return immediately
+  if ([_controller.viewControllers isEqualToArray:controllers]) {
+    return;
+  }
+
   UIViewController *top = controllers.lastObject;
   UIViewController *lastTop = _controller.viewControllers.lastObject;
 
@@ -181,7 +213,7 @@
   // controller is still there
   BOOL firstTimePush = ![lastTop isKindOfClass:[RNSScreen class]];
 
-  BOOL shouldAnimate = !firstTimePush && ((RNSScreenView *) lastTop.view).stackAnimation != RNSScreenStackAnimationNone;
+  BOOL shouldAnimate = !firstTimePush && ((RNSScreenView *) lastTop.view).stackAnimation != RNSScreenStackAnimationNone && !_controller.presentedViewController;
 
   if (firstTimePush) {
     // nothing pushed yet
@@ -244,12 +276,18 @@
   _controller.view.frame = self.bounds;
 }
 
+- (void)invalidate
+{
+  for (UIViewController *controller in _presentedModals) {
+    [controller dismissViewControllerAnimated:NO completion:nil];
+  }
+  [_presentedModals removeAllObjects];
+}
+
 - (void)dismissOnReload
 {
   dispatch_async(dispatch_get_main_queue(), ^{
-    for (UIViewController *controller in self->_presentedModals) {
-      [controller dismissViewControllerAnimated:NO completion:nil];
-    }
+    [self invalidate];
   });
 }
 
